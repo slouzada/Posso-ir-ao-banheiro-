@@ -1,0 +1,845 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Posso ir ao banheiro? — v7</title>
+
+<!-- Biblioteca XLSX (para ler .xlsx/.xls) -->
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+
+<style>
+  /* =======================
+     RESET + TEMA CLARO ACESSÍVEL
+     ======================= */
+  *, *::before, *::after { box-sizing: border-box; }
+  :root{
+    --left-width: 64%;
+    --right-width: 36%;
+    --gap: 14px;
+    --radius: 16px;
+
+    --font-base: 16px;
+    --font-title: 42px;
+    --font-turma: 20px;
+    --font-aluno-left: 14px;
+
+    /* Painel direito (apenas “Em andamento”) — tamanhos MAIORES */
+    --font-fila-who: 18px;     /* nome (ex.: João X.) */
+    --font-fila-turma: 16px;   /* turma (ex.: 6º1) */
+
+    --ok: #16a34a;
+    --muted: #475569;
+
+    --bg: #f5f7fb;
+    --panel: #ffffff;
+    --card: #f8fafc;
+    --text: #0f172a;
+    --accent: #2563eb;
+    --accent-2: #16a34a;
+    --border: #cbd5e1;
+    --focus: #94a3b8;
+
+    /* Alerta — paleta e parâmetros */
+    --alert-red: #d90429;      /* vermelho vivo */
+    --alert-pale: #ffe5e5;     /* vermelho bem clarinho */
+    --alert-deep-border: #7f1d1d;
+    --alert-mid-border: #ef4444;
+    --icon-warn-size: 26px;
+
+    /* [ANCHOR: RIGHT_GRID] — grade do painel direito (sem scroll) */
+    --right-cols: 2;  /* colunas na grade (2) */
+    --right-rows: 10; /* linhas na grade (10) => 2×10 = 20 tickets visíveis */
+
+    /* [ANCHOR: ALERT_CYCLE] — controle do ciclo de alerta */
+    --alert-cycle-duration: 2s; /* 2 estágios de 1s (VERMELHO ↔ VERMELHO CLARO) */
+    --alert-border-thick: 3px;  /* espessura do contorno em alerta */
+  }
+
+  /* =======================
+     LAYOUT GERAL
+     ======================= */
+  html, body {height:100%; margin:0; background:var(--bg); color:var(--text); font-family: system-ui, Segoe UI, Roboto, Helvetica, Arial, sans-serif; font-size: var(--font-base);}
+  .wrap{ display:flex; gap:var(--gap); padding:16px; box-sizing:border-box; height:100%; flex-direction: column; }
+  header{ display:flex; align-items:center; gap:16px; justify-content:space-between; padding: 8px 0 0; }
+  .title{ font-size: var(--font-title); font-weight:800; letter-spacing: .3px; margin:0; }
+  .controls{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+
+  .btn{
+    background: var(--accent); color:white; border:2px solid transparent; padding:11px 16px;
+    border-radius: 12px; font-weight:800; cursor:pointer; box-shadow: 0 4px 10px rgba(37,99,235,.25);
+  }
+  .btn:hover{ filter: brightness(1.05); }
+  .btn:focus{ outline: none; box-shadow: 0 0 0 3px var(--focus); }
+  .btn.secondary{ background: #0ea5e9; }
+  .btn.success{ background: var(--accent-2); }
+  .btn.warn{ background: #ef4444; }
+  .btn:disabled{ opacity: .6; cursor:not-allowed; }
+
+  .grid{
+    display:grid; grid-template-columns: var(--left-width) var(--right-width); gap: var(--gap);
+    height: calc(100% - 74px);
+  }
+
+  /* =======================
+     COLUNA ESQUERDA (TURMAS)
+     ======================= */
+  .left, .right{
+    background: var(--panel); border:1px solid var(--border); border-radius: var(--radius);
+    padding: 14px; overflow:auto;
+  }
+  .right{ overflow: hidden; } /* sem scroll no painel direito */
+
+  .turma{
+    background: var(--card); border:1px solid var(--border); border-radius: 14px; margin-bottom:12px;
+  }
+  .turma summary{
+    list-style:none; cursor:pointer; padding: 12px 14px; font-size: var(--font-turma); font-weight:800;
+    display:flex; align-items:center; justify-content:space-between;
+  }
+  .turma summary::-webkit-details-marker{ display:none; }
+  .turma .alunos{ display:flex; flex-wrap:wrap; gap:8px; padding: 0 12px 12px; }
+
+  .aluno-btn{
+    font-size: var(--font-aluno-left);
+    background:#ffffff; color:#0f172a; border:2px solid var(--border);
+    padding:8px 10px; border-radius: 12px; cursor:pointer; font-weight:800;
+    transition: background-color .2s ease, border-color .2s ease, color .2s ease;
+    background-clip: padding-box;
+  }
+  .aluno-btn:hover{ border-color:#94a3b8; }
+  .aluno-btn.active{ background: #ecfdf5; border-color: #10b981; }
+
+  /* ALERTA — manter comportamento anterior (pode ser ajustado depois) */
+  .aluno-btn.overdue{
+    animation: blink-red-pale var(--alert-cycle-duration) steps(1, end) infinite;
+    background: var(--alert-red);
+    color: #ffffff;
+    border-color: var(--alert-deep-border);
+    border-width: var(--alert-border-thick);
+    text-shadow: 0 1px 0 rgba(0,0,0,.18);
+  }
+  .ticket.od{
+    animation: blink-red-pale var(--alert-cycle-duration) steps(1, end) infinite;
+    background: var(--alert-red);
+    color: #ffffff;
+    border-color: var(--alert-deep-border);
+    border-width: var(--alert-border-thick);
+    text-shadow: 0 1px 0 rgba(0,0,0,.18);
+  }
+  @keyframes blink-red-pale{
+    0%, 49.999% { background-color: var(--alert-red); color:#fff; border-color: var(--alert-deep-border); }
+    50%, 100% { background-color: var(--alert-pale); color: var(--alert-deep-border); border-color: var(--alert-mid-border); }
+  }
+  @media (prefers-reduced-motion: reduce){
+    .aluno-btn.overdue, .ticket.od{ animation: none; background: var(--alert-pale); color: var(--alert-deep-border); border-color: var(--alert-mid-border); }
+  }
+
+  .hint{ color:var(--muted); font-size: 13px; padding: 0 14px 8px; }
+
+  /* =======================
+     COLUNA DIREITA (EM ANDAMENTO) — sem scroll
+     ======================= */
+  .right h2{ margin: 4px 0 10px; font-size: 22px; font-weight:900; }
+
+  /* Grade fixa 2×10 que ocupa 100% da altura do painel direito */
+  .fila{
+    height: calc(100% - 30px);
+    display:grid;
+    grid-template-columns: repeat(var(--right-cols), minmax(0,1fr));
+    grid-template-rows: repeat(var(--right-rows), minmax(0,1fr));
+    gap:8px;
+  }
+  .ticket{
+    border:2px solid var(--border); background:#ffffff; border-radius: 14px;
+    padding:6px 8px; display:flex; align-items:center; justify-content:space-between;
+    min-height: 0; overflow: hidden;
+    transition: background-color .2s ease, border-color .2s ease, color .2s ease;
+    background-clip: padding-box; font-weight: 800;
+  }
+  .ticket .who{
+    font-size: var(--font-fila-who); font-weight:900;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 20ch;
+  }
+  .ticket .meta{ color:var(--muted); font-size: var(--font-fila-turma); font-weight:800; }
+  .ticket.ok .time{ color: var(--ok); font-weight:900; }
+  .ico-warn{ font-size: var(--icon-warn-size); line-height: 1; vertical-align: middle; display: inline-block; transform: translateY(-1px); }
+  .ticket .time{ display:flex; align-items:center; gap:6px; font-variant-numeric: tabular-nums; }
+
+  /* =======================
+     MODAL DE CONFIGURAÇÕES — 2 colunas, sem sobreposição
+     ======================= */
+  dialog{ border:none; background: var(--panel); color: var(--text); border-radius: 20px; padding: 0;
+          width: min(1024px, 96vw); max-height: 90vh; box-shadow: 0 30px 80px rgba(0,0,0,.25); }
+  dialog::backdrop{ background: rgba(0,0,0,.28); }
+  .modal-head{ padding:18px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; }
+  .modal-body{ padding:18px; overflow:auto; }
+  .modal-foot{ padding:16px; border-top:1px solid var(--border); display:flex; gap:10px; justify-content:flex-end; }
+
+  .form-grid{ display:grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap:16px; }
+  @media (max-width: 980px){ .form-grid{ grid-template-columns: 1fr; } }
+  .field{ display:block; } .field label{ display:block; font-size:14px; margin-bottom:6px; color:#334155; font-weight:800; }
+  .input{ width:100%; padding:12px 14px; border-radius:12px; border:2px solid var(--border);
+          background:#ffffff; color: var(--text); font-size:15px; display:block; }
+  .span-2{ grid-column: span 2; }
+
+  .toast{ position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
+          background: #111827; border:1px solid #1f2937; color: #e5e7eb; padding:10px 14px; border-radius:12px;
+          box-shadow: 0 10px 30px rgba(0,0,0,.35); display:none; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1 class="title">Posso ir ao banheiro?</h1>
+      <div class="controls">
+        <button id="btnImport" class="btn">📥 Importar Excel/CSV</button>
+        <input id="fileInput" type="file" accept=".xlsx,.xls,.csv" style="display:none"/>
+        <button id="btnConfig" class="btn">⚙️ Configurações</button>
+        <button id="btnExport" class="btn secondary">📝 Exportar registro (.txt)</button>
+        <button id="btnEncerrar" class="btn warn">🧹 Encerrar dia</button>
+      </div>
+    </header>
+
+    <div class="grid">
+      <!-- COLUNA ESQUERDA: TURMAS -->
+      <section class="left">
+        <div class="hint">Clique numa <b>turma</b> para exibir os alunos. Clique no <b>aluno</b> para iniciar/encerrar o temporizador.</div>
+        <div id="turmas"></div>
+      </section>
+
+      <!-- COLUNA DIREITA: FILA EM ANDAMENTO (2×10 sem scroll) -->
+      <aside class="right">
+        <h2>Em andamento</h2>
+        <div id="fila" class="fila"></div>
+        <div id="vazio" class="empty">Nenhum aluno fora no momento.</div>
+      </aside>
+    </div>
+  </div>
+
+  <!-- MODAL: CONFIGURAÇÕES (restrito por senha) -->
+  <dialog id="dlgConfig">
+    <div class="modal-head">
+      <h3 style="margin:0;font-weight:900">Configurações (restrito)</h3>
+      <button class="btn secondary" onclick="closeConfig()">Fechar</button>
+    </div>
+
+    <div class="modal-body">
+      <!-- Grade SIMÉTRICA (2 colunas) -->
+      <div class="form-grid">
+        <div class="field">
+          <label for="cfgPass">Código de verificação (senha para alterar configurações)</label>
+          <input id="cfgPass" class="input" type="password" placeholder="Digite a senha de configuração"/>
+        </div>
+
+        <div class="field">
+          <label for="cfgSenhaPadrao">Senha padrão atual (somente leitura neste MVP)</label>
+          <input id="cfgSenhaPadrao" class="input" type="text" value="ARISTEO10" disabled />
+        </div>
+
+        <div class="field">
+          <label id="lblCfgTempo" for="cfgTempo">Tempo-alvo por aluno (minutos)</label>
+          <input id="cfgTempo" class="input" type="number" min="1" max="60" step="1" />
+        </div>
+
+        <div class="field">
+          <label for="cfgMax">Máximo simultâneo por turma</label>
+          <input id="cfgMax" class="input" type="number" min="1" max="10" step="1" />
+        </div>
+
+        <div class="field">
+          <label for="cfgPersist">Persistência (não resetar ao recarregar)</label>
+          <select id="cfgPersist" class="input">
+            <option value="on">ON (recomendado em produção)</option>
+            <option value="off">OFF (útil para testes locais)</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="cfgOrdem">Ordem das turmas</label>
+          <input id="cfgOrdem" class="input" type="text" placeholder="Ex.: 6º,7º,8º,9º,2ºEM,3ºEM" />
+        </div>
+
+        <div class="field span-2">
+          <label for="cfgStartEnd">Janela do dia (informativo)</label>
+          <input id="cfgStartEnd" class="input" type="text" placeholder="Ex.: 07:00–14:00"/>
+        </div>
+
+        <div class="field span-2">
+          <label>Importação</label>
+          <div class="hint">
+            Excel: cada <b>planilha</b> é uma turma. Detectamos a coluna do aluno por cabeçalho como <code>nm_aluno</code>, <code>aluno</code> ou similar.<br/>
+            CSV alternativo: cabeçalho <code>Turma,Aluno</code> e linhas subsequentes.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-foot">
+      <button class="btn secondary" onclick="closeConfig()">Cancelar</button>
+      <button class="btn success" onclick="saveConfig()">Salvar</button>
+    </div>
+  </dialog>
+
+  <div id="toast" class="toast"></div>
+
+<script>
+/* ============================================================
+   "Posso ir ao banheiro?" — MVP OFFLINE (página única) — v7
+   Foco desta versão: Importação Excel robusta (com cabeçalho nm_aluno / aluno).
+   ============================================================ */
+
+const DEFAULT_CONFIG = {
+  minutesTarget: 2,          // *** MODO TESTE: 2 (ver [ANCHOR: TIME_SCALE_TEST])
+  maxSimultaneousPerTurma: 1,
+  persist: "on",
+  orderGroups: ["6º", "7º", "8º", "9º", "2º", "3º"],
+  janela: "07:00–14:00"
+};
+
+const ADMIN_CODE = "ARISTEO10"; // senha de verificação (config)
+
+const LS_CONFIG = "pib_config_v1";
+const LS_TIMERS = "pib_timers_v1";
+const LS_LOG    = "pib_log_v1";
+const LS_TURMAS = "pib_turmas_v1"; // persistir turmas importadas
+
+let appConfig = loadConfig();
+let dataModel = loadTurmas() || [];
+if(dataModel.length === 0){ dataModel = buildPlaceholder(); } // placeholder até importar
+
+let timers = loadTimers();
+let logRows = loadLog();
+let tickHandle = null;
+let collapseOnSelect = true;
+let turmaActiveCounts = {};
+
+/* ============================================
+   [ANCHOR: TIME_SCALE_TEST] — ESCALA DO TEMPO
+*/
+const TIME_UNIT = "seconds"; // "seconds" | "minutes"
+const UNIT_MS   = (TIME_UNIT === "seconds") ? 1000 : 60*1000;
+const RIGHT_CAPACITY = 20;
+
+/* =================================
+   PLACEHOLDER (mostra instrução até importar)
+   ================================= */
+function buildPlaceholder(){
+  const demo = [{ id:"T1", code:"Importe sua planilha (📥)", group:"Info", alunos:[] }];
+  return demo;
+}
+
+/* =================================
+   [ANCHOR: STORAGE]
+   ================================= */
+function loadConfig(){
+  try{
+    const raw = localStorage.getItem(LS_CONFIG);
+    if(raw){ return {...DEFAULT_CONFIG, ...JSON.parse(raw)}; }
+  }catch(_){}
+  return {...DEFAULT_CONFIG};
+}
+function persistConfigMaybe(){
+  if(appConfig.persist === "on"){
+    localStorage.setItem(LS_CONFIG, JSON.stringify(appConfig));
+  }else{
+    localStorage.removeItem(LS_CONFIG);
+  }
+}
+function loadTimers(){
+  try{
+    const raw = localStorage.getItem(LS_TIMERS);
+    if(raw){ return JSON.parse(raw); }
+  }catch(_){}
+  return {};
+}
+function saveTimers(){
+  if(appConfig.persist === "on"){
+    localStorage.setItem(LS_TIMERS, JSON.stringify(timers));
+  }
+}
+function loadLog(){
+  try{
+    const raw = localStorage.getItem(LS_LOG);
+    if(raw){ return JSON.parse(raw); }
+  }catch(_){}
+  return [];
+}
+function saveLog(){
+  if(appConfig.persist === "on"){
+    localStorage.setItem(LS_LOG, JSON.stringify(logRows));
+  }
+}
+function saveTurmas(){
+  if(appConfig.persist === "on"){
+    localStorage.setItem(LS_TURMAS, JSON.stringify(dataModel));
+  }
+}
+function loadTurmas(){
+  try{
+    const raw = localStorage.getItem(LS_TURMAS);
+    if(raw){ return JSON.parse(raw); }
+  }catch(_){}
+  return null;
+}
+
+/* =================================
+   [ANCHOR: UTIL]
+   ================================= */
+function now(){ return Date.now(); }
+function fmtDateTime(ts){
+  const d = new Date(ts);
+  const pad = n=>String(n).padStart(2,"0");
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+function fmtElapsed(ms){
+  const s = Math.floor(ms/1000);
+  const m = Math.floor(s/60);
+  const ss = s % 60;
+  return `${String(m).padStart(2,"0")}:${String(ss).padStart(2,"0")}`;
+}
+function abbrevName(full){
+  const parts = full.trim().split(/\s+/);
+  if(parts.length===1) return parts[0];
+  return `${parts[0]} ${parts[parts.length-1].charAt(0)}.`;
+}
+function groupFromSheetName(sheetName){
+  // pega o primeiro token (antes do espaço), ex.: "2º TEC" -> "2º", "6º1" -> "6º1" (mas para ordenação usaremos regex)
+  const first = sheetName.split(/\s+/)[0];
+  // extrai só a parte do "ano/série" para ordenar: ex "6º1" -> "6º"
+  const m = first.match(/^(\d+º)/);
+  return m ? m[1] : first;
+}
+function toast(msg){
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.style.display = 'block';
+  setTimeout(()=>{ t.style.display = 'none'; }, 2200);
+}
+
+/* =================================
+   [ANCHOR: DOM RENDER]
+   ================================= */
+function renderTurmas(){
+  const host = document.getElementById('turmas');
+  host.innerHTML = "";
+
+  // ordenação pelas chaves definidas e pelo nome da turma
+  const order = appConfig.orderGroups;
+  const sorted = [...dataModel].sort((a,b)=>{
+    const ga = order.indexOf(a.group); const gb = order.indexOf(b.group);
+    if(ga!==gb) return ga-gb;
+    return a.code.localeCompare(b.code, 'pt-BR', {numeric:true});
+  });
+
+  turmaActiveCounts = {};
+  for(const t of sorted){ turmaActiveCounts[t.id] = countActiveInTurma(t.id); }
+
+  for(const turma of sorted){
+    const details = document.createElement('details');
+    details.className = 'turma';
+
+    const sum = document.createElement('summary');
+    /* Sem duplicidade: mostra apenas o code (nome da planilha) */
+    sum.innerHTML = `<span>${turma.code}</span><span style="font-size:14px;color:var(--muted)">Ativos: <b id="atv_${turma.id}">${turmaActiveCounts[turma.id]}</b> / ${appConfig.maxSimultaneousPerTurma}</span>`;
+    details.appendChild(sum);
+
+    const box = document.createElement('div');
+    box.className = 'alunos';
+
+    for(const aluno of turma.alunos){
+      const key = keyFor(turma.id, aluno.id);
+      const btn = document.createElement('button');
+      btn.className = 'aluno-btn';
+      btn.textContent = aluno.nome;
+      btn.dataset.turmaId = turma.id;
+      btn.dataset.turmaCode = turma.code;
+      btn.dataset.alunoId = aluno.id;
+      btn.dataset.alunoNome = aluno.nome;
+
+      if(timers[key]) btn.classList.add('active');
+
+      btn.addEventListener('click', ()=>{
+        toggleAluno(turma, aluno, btn, details);
+      });
+
+      box.appendChild(btn);
+    }
+
+    details.appendChild(box);
+    host.appendChild(details);
+  }
+}
+
+function renderFila(){
+  const host = document.getElementById('fila');
+  host.innerHTML = "";
+
+  const items = [];
+  for(const k in timers){ const t = timers[k]; if(t && t.start){ items.push({...t}); } }
+  items.sort((a,b)=> a.start - b.start);
+
+  const overflow = Math.max(0, items.length - RIGHT_CAPACITY);
+  const shown = items.slice(0, RIGHT_CAPACITY);
+
+  const targetMs = appConfig.minutesTarget * UNIT_MS;
+
+  for(const it of shown){
+    const card = document.createElement('div');
+    const elapsed = now() - it.start;
+    const od = elapsed > targetMs;
+    card.className = 'ticket ' + (od ? 'od' : 'ok');
+
+    const nomeAbv = abbrevName(it.alunoNome);
+    const turmaTxt = it.turmaCode; // exibe exatamente o nome da planilha/turma
+    const timeText = (od ? '<span class="ico-warn" aria-hidden="true">⚠️</span> ' : '') + fmtElapsed(elapsed);
+
+    card.innerHTML = `
+      <div>
+        <div class="who" title="${it.alunoNome}">${nomeAbv}</div>
+        <div class="meta">${turmaTxt}</div>
+      </div>
+      <div class="time">${timeText}</div>
+    `;
+
+    host.appendChild(card);
+  }
+
+  if(overflow > 0){
+    const more = document.createElement('div');
+    more.className = 'ticket';
+    more.innerHTML = `
+      <div><div class="who">+${overflow} aguardando</div><div class="meta">capacidade 20</div></div>
+      <div class="time">fila</div>
+    `;
+    host.appendChild(more);
+  }
+}
+
+/* =================================
+   [ANCHOR: LÓGICA]
+   ================================= */
+function keyFor(turmaId, alunoId){ return `${turmaId}|${alunoId}`; }
+function countActiveInTurma(turmaId){
+  let c = 0; for(const k in timers){ if(k.startsWith(turmaId+"|")) c++; }
+  return c;
+}
+
+function toggleAluno(turma, aluno, btn, detailsEl){
+  const key = keyFor(turma.id, aluno.id);
+  const running = Boolean(timers[key]);
+
+  if(!running){
+    const cur = countActiveInTurma(turma.id);
+    if(cur >= appConfig.maxSimultaneousPerTurma){
+      toast(`Limite atingido em ${turma.code}: ${appConfig.maxSimultaneousPerTurma}.`);
+      return;
+    }
+    timers[key] = {
+      start: now(), turmaId: turma.id, turmaCode: turma.code,
+      alunoId: aluno.id, alunoNome: aluno.nome
+    };
+    btn.classList.add('active');
+  }else{
+    const t = timers[key];
+    const endTs = now();
+    const durMs = endTs - t.start;
+
+    logRows.push({
+      whenEnd: endTs, turmaCode: t.turmaCode, alunoNome: t.alunoNome,
+      startedAt: t.start, durationMs: durMs
+    });
+
+    delete timers[key];
+    btn.classList.remove('active','overdue');
+  }
+
+  turmaActiveCounts[turma.id] = countActiveInTurma(turma.id);
+  const lbl = document.getElementById(`atv_${turma.id}`);
+  if(lbl) lbl.textContent = turmaActiveCounts[turma.id];
+
+  saveTimers(); saveLog();
+  if(collapseOnSelect){ detailsEl.open = false; }
+  renderFila();
+}
+
+function tick(){
+  const targetMs = appConfig.minutesTarget * UNIT_MS;
+
+  // Botões da esquerda: aplica/remover estado overdue
+  document.querySelectorAll('.aluno-btn.active').forEach(btn=>{
+    const key = keyFor(btn.dataset.turmaId, btn.dataset.alunoId);
+    const t = timers[key]; if(!t) return;
+    const elapsed = now() - t.start;
+    if(elapsed > targetMs){ btn.classList.add('overdue'); }
+    else{ btn.classList.remove('overdue'); }
+  });
+
+  renderFila();
+  saveTimers();
+}
+
+/* =================================
+   [ANCHOR: IMPORTAÇÃO EXCEL/CSV]
+   ================================= */
+function onImportClick(){
+  document.getElementById('fileInput').click();
+}
+function onFileChosen(ev){
+  const file = ev.target.files && ev.target.files[0];
+  if(!file) return;
+  const name = file.name.toLowerCase();
+  const isCSV = name.endsWith(".csv");
+  const isXLS = name.endsWith(".xls") || name.endsWith(".xlsx");
+
+  if(isCSV){
+    const reader = new FileReader();
+    reader.onload = e=>{
+      try{
+        const text = e.target.result;
+        importFromCSV(text);
+      }catch(err){
+        console.error(err);
+        toast("Falha ao ler CSV.");
+      }
+    };
+    reader.readAsText(file, "utf-8");
+  }else if(isXLS){
+    if(!window.XLSX){
+      toast("Leitura de Excel indisponível (CDN não carregou). Tente novamente ou use CSV.");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = e=>{
+      try{
+        const data = new Uint8Array(e.target.result);
+        const wb = XLSX.read(data, {type:'array'});
+        importFromWorkbook(wb);
+      }catch(err){
+        console.error(err);
+        toast("Falha ao ler Excel.");
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  }else{
+    toast("Formato não suportado. Use .xlsx, .xls ou .csv.");
+  }
+  ev.target.value = "";
+}
+
+/* CSV esperado: cabeçalho "Turma,Aluno" */
+function importFromCSV(text){
+  const lines = text.split(/\r?\n/).map(s=>s.trim());
+  if(lines.filter(Boolean).length === 0){ toast("CSV vazio."); return; }
+  const header = (lines[0]||"").split(",").map(s=>s.trim().toLowerCase());
+  const iTurma = header.indexOf("turma");
+  const iAluno = header.indexOf("aluno");
+  if(iTurma===-1 || iAluno===-1){
+    toast("CSV inválido. Cabeçalho deve conter Turma,Aluno.");
+    return;
+  }
+  const map = new Map();
+  for(let i=1;i<lines.length;i++){
+    if(!lines[i]) continue;
+    const cols = lines[i].split(",").map(s=>s.trim());
+    const turma = cols[iTurma] || "";
+    const aluno = cols[iAluno] || "";
+    if(!turma || !aluno) continue;
+    if(!map.has(turma)) map.set(turma, []);
+    map.get(turma).push(aluno);
+  }
+  buildModelFromMap(map);
+}
+
+/* Excel: cada planilha = turma; detecta coluna do nome por cabeçalho */
+function importFromWorkbook(wb){
+  const map = new Map();
+  const isHeaderMatch = (v)=>{
+    const s = (v||"").toString().trim().toLowerCase();
+    return s==="nm_aluno" || s==="aluno" || s==="nome_aluno" || s==="nome do aluno" || s==="nm aluno" || s==="nome" || s==="nm_alunos";
+  };
+  wb.SheetNames.forEach(sheetName=>{
+    const ws = wb.Sheets[sheetName];
+    const rows = XLSX.utils.sheet_to_json(ws, {header:1, raw:false});
+    if(!rows || rows.length===0) return;
+
+    // acha a linha de cabeçalho
+    let headerIdx = -1, alunoCol = -1;
+    for(let r=0; r<Math.min(rows.length, 10); r++){
+      const row = rows[r];
+      for(let c=0; c<row.length; c++){
+        if(isHeaderMatch(row[c])){
+          headerIdx = r; alunoCol = c; break;
+        }
+      }
+      if(headerIdx>=0) break;
+    }
+
+    // se não achou cabeçalho, tenta heurística: pega primeira coluna não vazia das linhas
+    const alunos = [];
+    if(headerIdx>=0 && alunoCol>=0){
+      for(let r=headerIdx+1; r<rows.length; r++){
+        const nome = (rows[r][alunoCol]||"").toString().trim();
+        if(nome) alunos.push(nome);
+      }
+    }else{
+      for(let r=0; r<rows.length; r++){
+        const nome = (rows[r][0]||"").toString().trim();
+        if(nome && nome.toLowerCase()!=="aluno") alunos.push(nome);
+      }
+    }
+
+    if(alunos.length>0){
+      map.set(sheetName, alunos);
+    }
+  });
+
+  if(map.size===0){
+    toast("Não encontrei alunos nas planilhas (verifique cabeçalhos).");
+    return;
+  }
+  buildModelFromMap(map);
+}
+
+/* Constrói dataModel a partir de Map(turma => [nomes]) */
+function buildModelFromMap(map){
+  const turmas = [];
+  let idx = 1;
+  for(const [turmaCode, alunosArr] of map.entries()){
+    const group = groupFromSheetName(turmaCode);
+    const alunos = alunosArr.map((nome, i)=>({ id: `A${i+1}`, nome }));
+    turmas.push({ id: `U${idx++}`, code: turmaCode, group, alunos });
+  }
+  dataModel = turmas;
+  saveTurmas();
+  timers = {}; saveTimers(); // limpa timers, pois as turmas mudaram
+  renderTurmas(); renderFila();
+  toast("Turmas importadas com sucesso.");
+}
+
+/* =================================
+   [ANCHOR: EXPORTAR / ENCERRAR / CONFIG]
+   ================================= */
+function exportTxt(){
+  const lines = [];
+  lines.push(`# Posso ir ao banheiro? — Registro`);
+  lines.push(`# Gerado em: ${fmtDateTime(now())}`);
+  lines.push(`# Janela: ${appConfig.janela}`);
+  lines.push(`# Tempo-alvo: ${appConfig.minutesTarget} ${TIME_UNIT === "seconds" ? "segundos (TESTE)" : "minutos"}`);
+  lines.push(`# Máx simultâneo por turma: ${appConfig.maxSimultaneousPerTurma}`);
+  lines.push(`# Persistência: ${appConfig.persist}`);
+  lines.push(``);
+
+  lines.push(`## Finalizados`);
+  if(logRows.length===0){ lines.push(`(nenhum)`); }
+  else{
+    for(const r of logRows){
+      lines.push(`${fmtDateTime(r.whenEnd)}; ${r.turmaCode}; ${r.alunoNome}; ${fmtElapsed(r.durationMs)}`);
+    }
+  }
+
+  lines.push(``);
+  lines.push(`## Em andamento (no momento da exportação)`);
+  const active = [];
+  for(const k in timers){ active.push(timers[k]); }
+  active.sort((a,b)=> a.start - b.start);
+  if(active.length===0){ lines.push(`(nenhum)`); }
+  else{
+    for(const t of active){
+      const dur = now() - t.start;
+      lines.push(`IN_PROGRESS; ${t.turmaCode}; ${t.alunoNome}; iniciado ${fmtDateTime(t.start)}; decorridos ${fmtElapsed(dur)}`);
+    }
+  }
+
+  const blob = new Blob([lines.join("\n")], {type:"text/plain;charset=utf-8"});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `registro_banheiro_${Date.now()}.txt`;
+  document.body.appendChild(a);
+  a.click(); a.remove();
+}
+
+function encerrarDia(){
+  if(!confirm("Encerrar o dia? Isso limpará timers e o log. (Sugestão: exporte o registro antes)")) return;
+  timers = {}; logRows = [];
+  saveTimers(); saveLog();
+  renderTurmas(); renderFila();
+  toast("Dia encerrado.");
+}
+
+function openConfig(){
+  const lblTempo = document.getElementById('lblCfgTempo');
+  const inpTempo = document.getElementById('cfgTempo');
+
+  if(TIME_UNIT === "seconds"){
+    lblTempo.textContent = "Tempo-alvo por aluno (segundos — MODO TESTE)";
+    inpTempo.min = 1; inpTempo.max = 600; inpTempo.step = 1;
+  }else{
+    lblTempo.textContent = "Tempo-alvo por aluno (minutos)";
+    inpTempo.min = 1; inpTempo.max = 60; inpTempo.step = 1;
+  }
+
+  document.getElementById('cfgTempo').value = appConfig.minutesTarget;
+  document.getElementById('cfgMax').value   = appConfig.maxSimultaneousPerTurma;
+  document.getElementById('cfgPersist').value = appConfig.persist;
+  document.getElementById('cfgOrdem').value = appConfig.orderGroups.join(',');
+  document.getElementById('cfgStartEnd').value = appConfig.janela;
+  document.getElementById('cfgPass').value = "";
+  document.getElementById('dlgConfig').showModal();
+}
+function closeConfig(){ document.getElementById('dlgConfig').close(); }
+
+function saveConfig(){
+  const pass = document.getElementById('cfgPass').value.trim();
+  if(pass !== ADMIN_CODE){ toast("Código de verificação inválido."); return; }
+
+  const minutes = parseInt(document.getElementById('cfgTempo').value,10);
+  const maxSim  = parseInt(document.getElementById('cfgMax').value,10);
+  const persist = document.getElementById('cfgPersist').value;
+  const ordemTxt= document.getElementById('cfgOrdem').value.trim();
+  const janela  = document.getElementById('cfgStartEnd').value.trim();
+
+  if(!(minutes>=1)) { toast("Tempo-alvo deve ser ≥ 1."); return; }
+  if(!(maxSim>=1 && maxSim<=10)){ toast("Máximo simultâneo por turma deve estar entre 1 e 10."); return; }
+
+  appConfig.minutesTarget = minutes;
+  appConfig.maxSimultaneousPerTurma = maxSim;
+  appConfig.persist = persist;
+  appConfig.janela = janela || DEFAULT_CONFIG.janela;
+
+  if(ordemTxt){
+    const parsed = ordemTxt.split(",").map(s=>s.trim()).filter(Boolean);
+    if(parsed.length>0){ appConfig.orderGroups = parsed; }
+  }
+
+  persistConfigMaybe();
+  renderTurmas();
+  toast("Configurações salvas.");
+  closeConfig();
+}
+
+/* =================================
+   [ANCHOR: BOOTSTRAP]
+   ================================= */
+function bootstrap(){
+  document.getElementById('btnConfig').addEventListener('click', openConfig);
+  document.getElementById('btnExport').addEventListener('click', exportTxt);
+  document.getElementById('btnEncerrar').addEventListener('click', encerrarDia);
+  document.getElementById('btnImport').addEventListener('click', onImportClick);
+  document.getElementById('fileInput').addEventListener('change', onFileChosen);
+
+  renderTurmas(); renderFila();
+  tickHandle = setInterval(tick, 1000);
+
+  if(appConfig.persist === "off"){
+    try{
+      localStorage.removeItem(LS_TIMERS);
+      localStorage.removeItem(LS_LOG);
+      localStorage.removeItem(LS_TURMAS);
+    }catch(_){}
+  }
+}
+bootstrap();
+</script>
+</body>
+</html>
